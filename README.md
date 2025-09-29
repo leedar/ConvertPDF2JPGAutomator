@@ -4,6 +4,6 @@ Automator Quick Action to convert selected pdfs to jpg.
 <ul>
   <li>Copy the Convert PDF to JPG folder to ~/Library/Services <p></p><img src="img/ConvertContextMenu.png" width="400" height="400"/></p></li>
   <li>You should see the finder context menu by Right-Click -> Quick Action -> Convert PDf to JPG selection show up on PDF files
-  <img src="img/ConvertSuccessful.png" width="400" height="400"/></li>
+  <p></p><img src="img/ConvertSuccessful.png" width="400" height="400"/></li></p></li>
 </ul>
 </p>
