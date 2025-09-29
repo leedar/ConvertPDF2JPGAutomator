@@ -1,0 +1,596 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>528</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.cocoa.string</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>2.0.3</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>AMParameterProperties</key>
+				<dict>
+					<key>COMMAND_STRING</key>
+					<dict/>
+					<key>CheckedForUserDefaultShell</key>
+					<dict/>
+					<key>inputMethod</key>
+					<dict/>
+					<key>shell</key>
+					<dict/>
+					<key>source</key>
+					<dict/>
+				</dict>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.cocoa.string</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run Shell Script.action</string>
+				<key>ActionName</key>
+				<string>Run Shell Script</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>COMMAND_STRING</key>
+					<string>#!/bin/bash
+
+# Automator wrapper script for PDF to JPG conversion
+# Processes multiple files and shows detailed error feedback for each iteration
+
+# Set proper PATH to find system commands
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+# Configuration
+quality=90
+density=150
+log_file="/tmp/pdf_converter_$(date +%Y%m%d_%H%M%S).log"
+
+# Initialize counters
+total_files=0
+processed_files=0
+converted_files=0
+failed_files=0
+skipped_files=0
+errors=()
+
+# Initialize log with detailed input debugging
+echo "=== PDF to JPG Conversion Started at $(date) ===" &gt; "$log_file"
+echo "Number of arguments received: $#" &gt;&gt; "$log_file"
+echo "Arguments: $@" &gt;&gt; "$log_file"
+echo "Full argument list:" &gt;&gt; "$log_file"
+arg_num=1
+for arg in "$@"; do
+    echo "  Arg $arg_num: $arg" &gt;&gt; "$log_file"
+    arg_num=$((arg_num + 1))
+done
+echo "Current working directory: $(pwd)" &gt;&gt; "$log_file"
+echo "PATH: $PATH" &gt;&gt; "$log_file"
+
+# Debug: Check if we're receiving input from stdin instead of arguments
+if [ $# -eq 0 ]; then
+    echo "No arguments received - checking stdin..." &gt;&gt; "$log_file"
+    if [ -t 0 ]; then
+        echo "No stdin input detected either" &gt;&gt; "$log_file"
+    else
+        echo "Reading from stdin instead of arguments..." &gt;&gt; "$log_file"
+        while IFS= read -r line; do
+            echo "STDIN line: $line" &gt;&gt; "$log_file"
+            set -- "$@" "$line"
+        done
+        echo "After reading stdin, argument count: $#" &gt;&gt; "$log_file"
+    fi
+fi
+
+# Function to show critical error and exit
+show_critical_error() {
+    local message="$1"
+    echo "CRITICAL ERROR: $message" &gt;&gt; "$log_file"
+    osascript &lt;&lt; EOF
+display alert "PDF Converter - Critical Error" message "$message
+
+Check log: $log_file" as critical buttons {"Open Log", "OK"} default button "OK"
+
+if button returned of result is "Open Log" then
+    do shell script "open -a Console '$log_file'"
+end if
+EOF
+    exit 1
+}
+
+# Function to log and collect individual file errors
+log_file_error() {
+    local file="$1"
+    local error_msg="$2"
+    local filename=$(basename "$file")
+    
+    errors+=("$filename: $error_msg")
+    echo "ERROR [$filename]: $error_msg" &gt;&gt; "$log_file"
+    failed_files=$((failed_files + 1))
+}
+
+# Function to show progress notification
+show_progress() {
+    local current="$1"
+    local total="$2"
+    local filename="$3"
+    
+    osascript -e "display notification \"Converting: $(basename "$filename")\" subtitle \"$current of $total files\" with title \"PDF Converter\""
+}
+
+# Validate prerequisites
+echo "Checking prerequisites..." &gt;&gt; "$log_file"
+
+# Check if ImageMagick is available (prefer magick command over legacy convert)
+magick_cmd=""
+for path in "magick" "/usr/local/bin/magick" "/opt/homebrew/bin/magick" "convert" "/usr/local/bin/convert" "/opt/homebrew/bin/convert"; do
+    if command -v "$path" &amp;&gt; /dev/null; then
+        magick_cmd="$path"
+        break
+    fi
+done
+
+if [ -z "$magick_cmd" ]; then
+    show_critical_error "ImageMagick not found!
+
+To install:
+1. Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"
+2. Run: brew install imagemagick"
+fi
+
+echo "Using ImageMagick at: $magick_cmd" &gt;&gt; "$log_file"
+
+# Test ImageMagick
+if ! "$magick_cmd" -version &gt;&gt; "$log_file" 2&gt;&amp;1; then
+    show_critical_error "ImageMagick found but not working properly. Check installation."
+fi
+
+# Check if any files were provided (with better error message)
+if [ $# -eq 0 ]; then
+    echo "ERROR: No files provided to script" &gt;&gt; "$log_file"
+    show_critical_error "No files received by the script!
+
+This usually means:
+1. Automator 'Pass input' is set to 'to stdin' instead of 'as arguments'
+2. No files were selected in Finder
+3. Automator workflow is configured incorrectly
+
+Check the log for debugging info: $log_file"
+fi
+
+total_files=$#
+echo "Processing $total_files file(s)..." &gt;&gt; "$log_file"
+
+# Show initial progress
+osascript -e "display notification \"Starting conversion of $total_files file(s)...\" with title \"PDF Converter\""
+
+# Process each file individually
+for file_path in "$@"; do
+    processed_files=$((processed_files + 1))
+    filename=$(basename "$file_path")
+    
+    echo "--- Processing file $processed_files/$total_files: $filename ---" &gt;&gt; "$log_file"
+    
+    # Show progress
+    show_progress "$processed_files" "$total_files" "$file_path"
+    
+    # Check if file exists
+    if [ ! -f "$file_path" ]; then
+        log_file_error "$file_path" "File not found"
+        continue
+    fi
+    
+    # Check if file is readable
+    if [ ! -r "$file_path" ]; then
+        log_file_error "$file_path" "File not readable (permission denied)"
+        continue
+    fi
+    
+    # Check if it's a PDF file
+    # is_pdf=false
+    is_pdf=true
+
+
+    # # Method 1: Extension check
+    # if [[ "${file_path,,}" == *.pdf ]]; then
+    #     is_pdf=true
+    #     echo "  Detected as PDF by extension" &gt;&gt; "$log_file"
+    # fi
+    
+    # # Method 2: File command check
+    # file_type=$(file -b "$file_path" 2&gt;/dev/null)
+    # if echo "$file_type" | grep -qi "pdf"; then
+    #     is_pdf=true
+    #     echo "  Detected as PDF by file command: $file_type" &gt;&gt; "$log_file"
+    # fi
+    
+    # # Method 3: MIME type check
+    # mime_type=$(file -b --mime-type "$file_path" 2&gt;/dev/null)
+    # if [ "$mime_type" = "application/pdf" ]; then
+    #     is_pdf=true
+    #     echo "  Detected as PDF by MIME type: $mime_type" &gt;&gt; "$log_file"
+    # fi
+    
+    # if [ "$is_pdf" != "true" ]; then
+    #     echo "  Not a PDF file, skipping: $file_type / $mime_type" &gt;&gt; "$log_file"
+    #     skipped_files=$((skipped_files + 1))
+    #     continue
+    # fi
+    
+    # Prepare output files
+    dir_name=$(dirname "$file_path")
+    file_name=$(basename "$file_path")
+    base_name="${file_name%.*}"  # Remove extension
+    
+    # Debug: Log the path parsing
+    echo "  Directory: $dir_name" &gt;&gt; "$log_file"
+    echo "  Full filename: $file_name" &gt;&gt; "$log_file"
+    echo "  Base name: $base_name" &gt;&gt; "$log_file"
+    
+    # Ensure base_name is not empty
+    if [ -z "$base_name" ]; then
+        log_file_error "$file_path" "Could not extract base filename"
+        continue
+    fi
+    
+    output_pattern="$dir_name/${base_name}_%02d.jpg"
+    
+    # Check write permissions
+    if [ ! -w "$dir_name" ]; then
+        log_file_error "$file_path" "Cannot write to output directory: $dir_name"
+        continue
+    fi
+    
+    echo "  Converting to: $output_pattern" &gt;&gt; "$log_file"
+    echo "  Settings: quality=$quality, density=$density" &gt;&gt; "$log_file"
+    
+    # Perform the conversion using magick command
+    conversion_start=$(date)
+    
+    # Build and log the actual command that will be executed
+    if [[ "$magick_cmd" == *"magick"* ]]; then
+        # Modern magick command syntax
+        actual_command="$magick_cmd -density $density \"$file_path\" -quality $quality \"$output_pattern\""
+        echo "  Executing command: $actual_command" &gt;&gt; "$log_file"
+        conversion_output=$("$magick_cmd" -density "$density" "$file_path" -quality "$quality" "$output_pattern" 2&gt;&amp;1)
+    else
+        # Legacy convert command syntax
+        actual_command="$magick_cmd -density $density -quality $quality \"$file_path\" \"$output_pattern\""
+        echo "  Executing command: $actual_command" &gt;&gt; "$log_file"
+        conversion_output=$("$magick_cmd" -density "$density" -quality "$quality" "$file_path" "$output_pattern" 2&gt;&amp;1)
+    fi
+    
+    conversion_exit=$?
+    conversion_end=$(date)
+    
+    echo "  Conversion started: $conversion_start" &gt;&gt; "$log_file"
+    echo "  Conversion ended: $conversion_end" &gt;&gt; "$log_file"
+    echo "  Exit code: $conversion_exit" &gt;&gt; "$log_file"
+    
+    if [ -n "$conversion_output" ]; then
+        echo "  Output: $conversion_output" &gt;&gt; "$log_file"
+    fi
+    
+    if [ $conversion_exit -eq 0 ]; then
+        # Check if output files were actually created
+        # Use a more flexible pattern to catch all possible output files
+        output_files=("$dir_name"/${base_name}_*.jpg)
+        
+        converted_files=$((converted_files + 1))
+
+        # Check if any files match the pattern (bash will leave the pattern literal if no match)
+        # if [ -e "${output_files[0]}" ]; then
+        #     output_count=${#output_files[@]}
+        #     # echo "  SUCCESS: Created $output_count JPG file(s)" &gt;&gt; "$log_file"
+        #     # for output_file in "${output_files[@]}"; do
+        #     #     echo "    - $(basename "$output_file")" &gt;&gt; "$log_file"
+        #     # done
+        #     # converted_files=$((converted_files + 1))
+        # else
+        #     log_file_error "$file_path" "Conversion reported success but no output files found"
+        # fi
+    else
+        # Conversion failed - determine why
+        error_detail="$conversion_output"
+        if [ -z "$error_detail" ]; then
+            error_detail="Unknown conversion error (exit code: $conversion_exit)"
+        fi
+        
+        log_file_error "$file_path" "Conversion failed: $error_detail"
+    fi
+    
+    # Small delay to prevent overwhelming the system
+    sleep 0.1
+done
+
+# Generate summary
+echo "=== FINAL SUMMARY ===" &gt;&gt; "$log_file"
+echo "Total files: $total_files" &gt;&gt; "$log_file"
+echo "Successfully converted: $converted_files" &gt;&gt; "$log_file"
+echo "Failed: $failed_files" &gt;&gt; "$log_file"
+echo "Skipped (non-PDF): $skipped_files" &gt;&gt; "$log_file"
+echo "Conversion ended at: $(date)" &gt;&gt; "$log_file"
+
+# Show final results with detailed feedback
+if [ $converted_files -eq $total_files ]; then
+    # Perfect success
+    output_folder=$(dirname "$1")
+    osascript &lt;&lt; EOF
+set response to display dialog "✅ All $converted_files PDF files converted successfully!" ¬
+buttons {"Open Folder", "OK"} ¬
+default button "Open Folder" ¬
+with icon note ¬
+with title "Conversion Complete"
+
+if button returned of response is "Open Folder" then
+    tell application "Finder" to open folder POSIX file "$output_folder"
+end if
+EOF
+
+elif [ $converted_files -gt 0 ]; then
+    # Partial success - show summary with option to see details
+    summary_msg="Conversion Results:
+✅ Converted: $converted_files
+❌ Failed: $failed_files"
+    
+    if [ $skipped_files -gt 0 ]; then
+        summary_msg="$summary_msg
+⏭️ Skipped (non-PDF): $skipped_files"
+    fi
+    
+    # Add first few error details if any
+    if [ ${#errors[@]} -gt 0 ]; then
+        summary_msg="$summary_msg
+
+Recent errors:"
+        for i in $(seq 0 $((${#errors[@]} &gt; 3 ? 2 : ${#errors[@]} - 1))); do
+            summary_msg="$summary_msg
+• ${errors[$i]}"
+        done
+        
+        if [ ${#errors[@]} -gt 3 ]; then
+            summary_msg="$summary_msg
+• ... and $((${#errors[@]} - 3)) more"
+        fi
+    fi
+    
+    osascript &lt;&lt; EOF
+set response to display dialog "$summary_msg" ¬
+buttons {"View Log", "OK"} ¬
+default button "OK" ¬
+with icon caution ¬
+with title "Conversion Completed with Issues"
+
+if button returned of response is "View Log" then
+    do shell script "open -a Console '$log_file'"
+end if
+EOF
+
+else
+    # Complete failure
+    if [ $failed_files -gt 0 ]; then
+        error_summary="❌ Failed to convert any files ($failed_files failed)"
+        
+        if [ ${#errors[@]} -gt 0 ]; then
+            error_summary="$error_summary
+
+Errors encountered:"
+            for i in $(seq 0 $((${#errors[@]} &gt; 5 ? 4 : ${#errors[@]} - 1))); do
+                error_summary="$error_summary
+• ${errors[$i]}"
+            done
+            
+            if [ ${#errors[@]} -gt 5 ]; then
+                error_summary="$error_summary
+• ... and $((${#errors[@]} - 5)) more errors"
+            fi
+        fi
+        
+        osascript &lt;&lt; EOF
+display alert "Conversion Failed" message "$error_summary" as critical buttons {"View Log", "OK"} default button "OK"
+
+if button returned of result is "View Log" then
+    do shell script "open -a Console '$log_file'"
+end if
+EOF
+    else
+        # No PDFs found
+        osascript -e "display dialog \"No PDF files found in the $total_files selected file(s).
+
+Files skipped: $skipped_files\" buttons {\"OK\"} with icon note with title \"No PDFs to Convert\""
+    fi
+fi
+
+echo "Script completed. Log saved to: $log_file" &gt;&gt; "$log_file"</string>
+					<key>CheckedForUserDefaultShell</key>
+					<true/>
+					<key>inputMethod</key>
+					<integer>1</integer>
+					<key>shell</key>
+					<string>/bin/bash</string>
+					<key>source</key>
+					<string></string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.RunShellScript</string>
+				<key>CFBundleVersion</key>
+				<string>2.0.3</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunShellScriptAction</string>
+				<key>InputUUID</key>
+				<string>02335DB0-9B4A-4244-867D-997D78A687F9</string>
+				<key>Keywords</key>
+				<array>
+					<string>Shell</string>
+					<string>Script</string>
+					<string>Command</string>
+					<string>Run</string>
+					<string>Unix</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>546D6DCD-EC61-44A0-AD80-002762D743C2</string>
+				<key>ShowWhenRun</key>
+				<false/>
+				<key>UUID</key>
+				<string>C06BDB45-EE36-4E27-B2B9-29D48949CCA4</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>arguments</key>
+				<dict>
+					<key>0</key>
+					<dict>
+						<key>default value</key>
+						<integer>0</integer>
+						<key>name</key>
+						<string>inputMethod</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>0</string>
+					</dict>
+					<key>1</key>
+					<dict>
+						<key>default value</key>
+						<false/>
+						<key>name</key>
+						<string>CheckedForUserDefaultShell</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>1</string>
+					</dict>
+					<key>2</key>
+					<dict>
+						<key>default value</key>
+						<string></string>
+						<key>name</key>
+						<string>source</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>2</string>
+					</dict>
+					<key>3</key>
+					<dict>
+						<key>default value</key>
+						<string></string>
+						<key>name</key>
+						<string>COMMAND_STRING</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>3</string>
+					</dict>
+					<key>4</key>
+					<dict>
+						<key>default value</key>
+						<string>/bin/sh</string>
+						<key>name</key>
+						<string>shell</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>4</string>
+					</dict>
+				</dict>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+				<key>location</key>
+				<string>418.000000:794.000000</string>
+				<key>nibPath</key>
+				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>applicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>applicationBundleIDsByPath</key>
+		<dict>
+			<key>/System/Library/CoreServices/Finder.app</key>
+			<string>com.apple.finder</string>
+		</dict>
+		<key>applicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>applicationPaths</key>
+		<array>
+			<string>/System/Library/CoreServices/Finder.app</string>
+		</array>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject.PDF</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject.PDF</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>
